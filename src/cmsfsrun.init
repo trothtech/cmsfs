@@ -1,0 +1,137 @@
+#!/bin/sh
+#
+#
+#         Name: /etc/init.d/cmsfsrun (shell INIT script)
+#               run a profiling shell script from CMS minidisk via INIT
+#         Name: cmsfsrun.init (as shipped with the CMSFS utility)
+#
+#
+
+#
+# the name of the file on the CMS 191 disk which we are after
+CMSFSRUN_FILE=profile.sh
+
+#
+# a temporary directory where we will do our work (gets deleted)
+CMSFSRUN_TEMP=/dev/shm/cmsfs
+
+#
+# the block device of the 191 disk which we are after
+CMSFSRUN_DISK=191
+
+### BEGIN INIT INFO
+# Provides:             cmsfsrun
+# Required-Start:       network
+# Required-Stop:
+# Default-Start:          1 2 3 4 5
+# Default-Stop:         0           6
+# Short-Description:    run a profile from CMS minidisk
+# Description:
+### END INIT INFO
+
+#
+# are we running on System z or s390 or s390x?
+CHCCWDEV=`which chccwdev 2> /dev/null`
+CHZDEV=`which chzdev 2> /dev/null`
+if [ -z "$CHCCWDEV" -a -z "$CHZDEV" ] ; then exit ; fi
+# Note: CMS FS utilities can run on any platform,
+#       but make more sense on s390/s390x Linux on top of z/VM.
+
+#
+# hello, world!
+#echo "$0 $*" > /dev/console
+
+#
+# if we have a configuration file then source it for overrides
+if [ -r /etc/sysconfig/cmsfsrun ] ; then
+      . /etc/sysconfig/cmsfsrun ; fi
+
+#
+# force the device address to be four hex digits in length
+DISK=`echo "0000$CMSFSRUN_DISK" | rev | awk '{print substr($0,0,4)}' | rev`
+
+#
+# the following case block renders this a viable INIT script
+case $1 in
+
+  start)
+    # fall through beyond the case block
+    :
+    ;;
+
+  stop)
+    # nothing to do
+    exit
+    ;;
+
+  restart|reload|force_reload)
+    $0 stop
+    $0 start
+    ;;
+
+  status)
+    # nothing to do
+    exit
+    ;;
+
+  *)
+    echo "Usage: $0 {start|stop}" 1>&2
+    exit 3
+    ;;
+
+esac
+
+#
+# retrieve the block device name of the 191 disk
+D191=`grep "^0\.0\.$DISK" /proc/dasd/devices \
+  | awk -F ')' '{print $3}' | awk '{print $2}'`
+# if it is not listed then try to vary the 191 disk online
+if [ -z "$D191" ] ; then
+  D191R=OFF
+  if [ -z "$CHZDEV" ]
+    then chccwdev -e $DISK 1> /dev/null 2> /dev/null
+    else chzdev -e dasd $DISK 1> /dev/null 2> /dev/null
+  fi
+# try again to get the device name from the kernel
+  D191=`grep "^0\.0\.$DISK" /proc/dasd/devices \
+    | awk -F ')' '{print $3}' | awk '{print $2}'`
+else
+  D191R=ON
+fi
+# if it still does not show up then exit silently
+if [ -z "$D191" ] ; then exit ; fi
+
+#
+# read the file of interest from CMS space
+mkdir -p -m 700 $CMSFSRUN_TEMP
+cmsfscat -d /dev/$D191 -a $CMSFSRUN_FILE 1> $CMSFSRUN_TEMP/$CMSFSRUN_FILE 2> /dev/null
+RRC=$?
+
+#
+# if the read was successful and the file is not empty then run it
+if [ "$RRC" -eq 0 ] ; then
+    if [ -s $CMSFSRUN_TEMP/$CMSFSRUN_FILE ] ; then
+    chmod +x $CMSFSRUN_TEMP/$CMSFSRUN_FILE
+    $CMSFSRUN_TEMP/$CMSFSRUN_FILE ; RC=$?
+#   sh $CMSFSRUN_TEMP/$CMSFSRUN_FILE ; RC=$?     # alternate if "noexec"
+    else RC=0 ; fi
+else RC=$RRC ; fi
+
+#
+# if the 191 disk was offline when we started then restore that state
+if [ "$D191R" = OFF ] ; then
+  if [ -z "$CHZDEV" ]
+    then chccwdev -d $DISK 1> /dev/null 2> /dev/null
+    else chzdev -d dasd $DISK 1> /dev/null 2> /dev/null
+  fi
+
+
+fi
+
+#
+# clean up after ourselves
+rm -r $CMSFSRUN_TEMP
+
+exit $RC
+
+

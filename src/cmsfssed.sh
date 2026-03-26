@@ -1,0 +1,176 @@
+#!/bin/sh
+#
+#
+#         Name: CMSFSSED SH (shell script)
+#               should be copied to 'cmsfssed.sh' and executed
+#               Output is a 'sed' file which adds leading TAB characters
+#               required by 'make' and performs other substitutions
+#               based on platform and desired customizations.
+#       Author: Rick Troth, BMC Software, Inc., Houston, Texas, USA
+#         Date: 2000-Nov-03 (Fri)
+#               2002-Nov-04 (Mon)
+#               2002-Nov-08 (Fri)
+#               2023-09-05 (Tue) fixup to support *any* Linux release
+#
+#
+
+Z=`basename "$0"`
+#
+# char set testing ^ ! ~ @ $ % & * [] {} `' \/ <> () "
+# char set testing N E T A D P A A OC OC OC BF OC OC Q
+# char set testing O X L T O C M S BB BB QQ SS AA PP O
+# char set testing T C D   L T P T KK RR TT LL NN RR T
+#
+
+#
+#
+PREFIX="/usr"
+ETCDIR="/etc"
+SBINDIR="/sbin"
+DEFINES=""
+INCLUDES=""
+LINUX_RELEASE=""
+MODULES_DIRECTORY=""
+DRIVER_SOURCE=""
+
+#
+#
+while [ ! -z "$*" ] ; do
+    case "$1" in
+        --pref*)
+            PREFIX=`echo "$1" | awk -F'=' '{print $2}'`
+            if [ -z "$PREFIX" ] ; then PREFIX="/usr" ; fi
+            shift
+            ;;
+        --debug)
+            DEFINES="$DEFINES -DCMSFS_DEBUG"
+            shift
+            ;;
+        --*)
+            echo "$Z: unrecognized option '$1'" 1>&2
+            exit 24
+            ;;
+        -*)
+            echo "$Z: unrecognized option '$1'" 1>&2
+            exit 24
+            ;;
+        *)
+            echo "$Z: unrecognized parameter '$1'" 1>&2
+            exit 24
+            ;;
+    esac
+done
+
+#
+# is this an ASCII system?
+NL=`echo "" | od -t x1 | head -1 | awk '{print $2}'`
+case "$NL" in
+    0a|0A|00a|a)
+        DEFINES="$DEFINES -DCMSFS_HOST_ASCII"
+        ;;
+    15)
+        DEFINES="$DEFINES -DCMSFS_HOST_EBCDIC"
+        ;;
+    *)
+        echo "$Z: what kind of newline is '$NL'?" 1>&2
+        exit 32
+        ;;
+esac
+
+case `uname -s` in
+
+    Linux)
+
+        # for the driver, use the right VFS interface shim:
+        case `uname -r` in
+
+            2.2*|2.3*)
+                LINUX_RELEASE="2.2"
+#               ln -s cmsfs22x.c cmsfsvfs.c
+                INCLUDES="-I/usr/include/linux"
+                DRIVER_SOURCE="cmsfs22x.c"
+                MODULES_DIRECTORY="/lib/modules/`uname -r`/fs"
+                ;;
+
+            2.4*|2.5*)
+                LINUX_RELEASE="2.4"
+#               ln -s cmsfs24x.c cmsfsvfs.c
+                INCLUDES="-I/lib/modules/`uname -r`/build/include"
+                DRIVER_SOURCE="cmsfs24x.c"
+                MODULES_DIRECTORY="/lib/modules/`uname -r`/kernel/fs"
+#               MODULES_DIRECTORY="/lib/modules/`uname -r`/kernel/fs/cmsfs"
+                ;;
+
+            2.6*)
+                LINUX_RELEASE="2.6"
+#               ln -s cmsfs26x.c cmsfsvfs.c
+#               INCLUDES="-I/lib/modules/`uname -r`/build/include"
+#               DRIVER_SOURCE="cmsfs26x.c"
+#               MODULES_DIRECTORY="/lib/modules/`uname -r`/kernel/fs"
+#               MODULES_DIRECTORY="/lib/modules/`uname -r`/kernel/fs/cmsfs"
+                echo "$Z: The DRIVER does not work with Linux 2.6 and beyond." 1>&2
+                echo "$Z: (The utility should give you no trouble.)" 1>&2
+                ;;
+
+            3.*)
+                LINUX_RELEASE="3.x"
+#               ln -s cmsfs3xx.c cmsfsvfs.c
+#               INCLUDES="-I/lib/modules/`uname -r`/build/include"
+#               DRIVER_SOURCE="cmsfs24x.c"
+#               MODULES_DIRECTORY="/lib/modules/`uname -r`/kernel/fs"
+#               MODULES_DIRECTORY="/lib/modules/`uname -r`/kernel/fs/cmsfs"
+                echo "$Z: The DRIVER does not work with Linux 3.x and beyond." 1>&2
+                echo "$Z: (The utility should give you no trouble.)" 1>&2
+                ;;
+
+            *)
+                LINUX_RELEASE="4+"
+                echo "$Z: The DRIVER does not work with Linux 4.x and beyond." 1>&2
+                echo "$Z: (The utility should give you no trouble.)" 1>&2
+#               if [ `uname -s` = "Linux" ] ; then
+#                   echo "$Z: this release of Linux is not supported!" 1>&2
+#                   exit 28
+#               fi
+                ;;
+
+        esac
+
+        # new trick: tainted system by way of proprietary modules
+        if [ `uname -r` = "2.4.19" ] ; then
+            DEFINES="$DEFINES -DCMSFS_LICENSED" ; fi
+
+        ;;
+
+    *)
+        # for all other platforms than Linux there is no FS driver
+        :
+        ;;
+
+esac
+
+#
+# special handling if installation prefix is /usr
+if [ "$PREFIX" = "/usr" ] ; then
+    ETCDIR="/etc"
+    SBINDIR="/sbin"
+  else
+    ETCDIR="$PREFIX/etc"
+    SBINDIR="$PREFIX/sbin"
+fi
+
+#
+# platform-specific substutions ...
+echo "s#%PREFIX%#$PREFIX#g"
+echo "s#%ETCDIR%#$ETCDIR#g"
+echo "s#%SBINDIR%#$SBINDIR#g"
+echo "s#%DEFINES%#$DEFINES#g"
+echo "s#%INCLUDES%#$INCLUDES#g"
+echo "s#%LINUX_RELEASE%#$LINUX_RELEASE#g"
+echo "s#%DRIVER_SOURCE%#$DRIVER_SOURCE#g"
+echo "s#%MODULES_DIRECTORY%#$MODULES_DIRECTORY#g"
+# insert required TABs into the distribution makefile ...
+echo "" | awk '{printf "s#^        #\t#\n"}'
+
+exit
+
+
